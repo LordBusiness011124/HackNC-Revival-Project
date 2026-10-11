@@ -2,7 +2,7 @@
 
 Canva presentation: https://canva.link/ck6m02cfxzoooev
 
-Main slides: problem, demo example, solution, thank you/questions. Slides 5–12 are optional backup material.
+Main slides: problem, demo example, solution, thank you/questions. Slides 5–11 are optional backup material.
 
 Two minutes of presentation, then two minutes for questions. Present slides 1–4 only. Stay on slide 4 during Q&A and jump to the relevant backup slide when asked.
 
@@ -50,13 +50,13 @@ Gemini retries and then saves a pending-analysis intake if extraction is unavail
 
 Current work covers website intake, iMessage attachment handling and conversation linking, Gemini extraction, real inventory, candidate matching and activity history. Verified parts, reservations, repair volunteers, scheduling and completed-repair tracking are future work.
 
-### 11 — Who would use it? How would you get people to participate? How much waste has it saved?
-
-I would start with one campus repair club or repair café, where people already have repair skills and donor devices. Messaging makes contributions easy. I have not measured waste savings. Next I would track completed repairs and devices kept in use before estimating material impact.
-
-### 12 — How did you use the hackathon tracks?
+### 11 — How did you use the hackathon tracks?
 
 Frutiger Aero shapes the blue sky, water, glass and greenery visual design. Community shapes the shared repair inventory. Gemini handles image/text extraction. Photon supplies the iMessage interface. Tiger Data handles SQL inventory and Timescale activity history. Official category eligibility depends on event rules.
+
+### Additional answer — Who would use it, and how much waste has it saved?
+
+I would start with one campus repair club or repair café, where people already have repair skills and donor devices. Messaging makes contributions easy. I have not measured waste savings. Next I would track completed repairs and devices kept in use before estimating material impact. This answer is available in the notes without a separate slide in the saved deck.
 
 ## Before presenting
 
