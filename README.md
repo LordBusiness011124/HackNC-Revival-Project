@@ -14,6 +14,21 @@ npm run dev
 
 Open the Local URL printed by Vite, usually http://127.0.0.1:5173. The backend runs on port 3001. State saves to the ignored `data/state.json` file.
 
+## Store data in Tiger Data
+
+By default, state saves to `data/state.json`. To use a Tiger Data (TimescaleDB/Postgres) database instead:
+
+1. Create a free service at [console.cloud.timescale.com](https://console.cloud.timescale.com).
+2. Copy its connection string into `.env`:
+
+   ```dotenv
+   DATABASE_URL=postgres://tsdbadmin:<password>@<host>:<port>/tsdb?sslmode=require
+   ```
+
+3. Restart `npm run dev`. The backend logs `Storage: Tiger Data (Postgres)` and creates its tables on first request.
+
+Tables: `repairs`, `chat_sessions`, `processed_messages`, `devices`, `parts`, plus `messages` and `events`, which are TimescaleDB hypertables that keep history beyond what the dashboard shows. Reset clears chat, events, and confirmations but keeps the device inventory. Any plain Postgres database also works; the hypertables are simply skipped.
+
 ## Try the demo
 
 1. In the messages panel, choose Maya, the donor.

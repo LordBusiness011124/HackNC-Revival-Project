@@ -1,35 +1,25 @@
 import express from 'express';
-import { readFile, mkdir, writeFile, rename } from 'node:fs/promises';
 import path from 'node:path';
-import { freshState, processMessage, recordEvent, type RepairState } from './engine.js';
+import { processMessage, recordEvent, type RepairState } from './engine.js';
+import { createStore } from './store.js';
 
 const app = express();
 app.use(express.json({ limit: '32kb' }));
-const dataPath = path.resolve('data/state.json');
-let state: RepairState = freshState();
-try { state = JSON.parse(await readFile(dataPath, 'utf8')); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') console.warn('Saved state could not be read; starting a fresh demo.'); }
-let writing = Promise.resolve();
-function save() {
-  const serialized = JSON.stringify(state, null, 2);
-  writing = writing.catch(() => {}).then(async () => {
-    await mkdir(path.dirname(dataPath), { recursive: true });
-    await writeFile(`${dataPath}.tmp`, serialized);
-    await rename(`${dataPath}.tmp`, dataPath);
-  });
-  return writing;
-}
-const integration = { photon: 'demo' as 'demo' | 'connecting' | 'live' | 'error', gemini: Boolean(process.env.GEMINI_API_KEY), detail: 'Simulated messages. No texts are sent.' };
-app.get('/api/state', (_req, res) => {
-  const { sessions, processed, ...publicState } = state;
+const store = createStore();
+console.log(`Storage: ${store.kind === 'tiger' ? 'Tiger Data (Postgres)' : 'local file data/state.json'}`);
+const integration = { photon: 'demo' as 'demo' | 'connecting' | 'live' | 'error', gemini: Boolean(process.env.GEMINI_API_KEY), storage: store.kind, detail: 'Simulated messages. No texts are sent.' };
+app.get('/api/state', async (_req, res) => {
+  const { sessions, processed, ...publicState } = await store.read();
   res.json({ ...publicState, integration });
 });
 app.post('/api/message', async (req, res) => {
   const { text, role } = req.body;
   if (typeof text !== 'string' || !text.trim() || text.length > 2000 || !['donor', 'repairer'].includes(role)) { res.status(400).json({ error: 'Choose a role and enter a message under 2,000 characters.' }); return; }
-  const reply = processMessage(state, { text, role, session: `demo-${role}`, channel: 'demo' });
-  await save(); res.json({ reply });
+  const reply = await store.update(s => processMessage(s, { text, role, session: `demo-${role}`, channel: 'demo' }));
+  res.json({ reply });
 });
-app.post('/api/reset', async (_req, res) => { state = freshState(); await save(); res.json({ ok: true }); });
+app.post('/api/reset', async (_req, res) => { await store.reset(); res.json({ ok: true }); });
+app.get('/api/inventory', async (_req, res) => { res.json({ devices: await store.inventory() }); });
 app.post('/api/intake', async (req, res) => {
   const { description } = req.body;
   if (typeof description !== 'string' || !description.trim() || description.length > 2000) { res.status(400).json({ error: 'Describe the device in under 2,000 characters.' }); return; }
@@ -44,9 +34,8 @@ app.post('/api/intake', async (req, res) => {
       intake = { model: parsed.model.slice(0, 150), symptom: parsed.symptom.slice(0, 2000), source: 'gemini' };
     } catch { res.status(502).json({ error: 'Gemini intake failed. Check your key and model, or remove the key to use manual intake.' }); return; }
   }
-  state.intake = intake;
-  recordEvent(state, `Device submitted: ${intake.model}. Compatibility needs review.`);
-  await save(); res.json({ intake });
+  await store.update(s => { s.intake = intake; recordEvent(s, `Device submitted: ${intake.model}. Compatibility needs review.`); });
+  res.json({ intake });
 });
 
 const spectrumProjectId = process.env.SPECTRUM_PROJECT_ID || process.env.PROJECT_ID;
@@ -61,8 +50,8 @@ if (process.env.PHOTON_ENABLED === 'true' && spectrumProjectId && spectrumProjec
       integration.photon = 'live'; integration.detail = 'Photon connected. Text your assigned line: DONOR or REPAIRER.';
       for await (const [space, message] of photon.messages) {
         if (message.direction === 'outbound' || message.content.type !== 'text') continue;
-        const reply = processMessage(state, { text: message.content.text, session: `photon-${space.id}`, channel: 'imessage', messageId: message.id });
-        await save();
+        const text = message.content.text;
+        const reply = await store.update(s => processMessage(s, { text, session: `photon-${space.id}`, channel: 'imessage', messageId: message.id }));
         if (reply) await message.reply(reply);
       }
       integration.photon = 'error'; integration.detail = 'Photon stream closed. Restart the server to reconnect.';
