@@ -1,6 +1,9 @@
 import express from "express";
 import path from "node:path";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, writeFile, access } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+const runFile = promisify(execFile);
 import { randomUUID, randomBytes } from "node:crypto";
 import { LiveStore, extract, addDevice } from "./live.js";
 import { createConversationHandler } from "./conversation.js";
@@ -32,12 +35,25 @@ async function photoSave(photo?: { mimeType: string; data: string }) {
   await writeFile(`data/uploads/${id}`, bytes);
   return `/api/photos/${id}?type=${encodeURIComponent(photo.mimeType)}`;
 }
-app.get("/api/photos/:id", (req, res) => {
+app.get("/api/photos/:id", async (req, res) => {
   if (!/^[a-f0-9-]{36}$/.test(req.params.id)) {
     res.sendStatus(404);
     return;
   }
   const type = String(req.query.type);
+  if (type === "image/heic" || type === "image/heif") {
+    const original = path.resolve("data/uploads", req.params.id);
+    const preview = `${original}.jpg`;
+    try {
+      await access(preview);
+    } catch {
+      await runFile("sips", ["-s", "format", "jpeg", original, "--out", preview]);
+    }
+    res.type("image/jpeg");
+    res.set("X-Content-Type-Options", "nosniff");
+    res.sendFile(preview);
+    return;
+  }
   res.type(allowed.includes(type) ? type : "application/octet-stream");
   res.set("X-Content-Type-Options", "nosniff");
   res.sendFile(path.resolve("data/uploads", req.params.id));
@@ -47,7 +63,10 @@ app.get("/api/state", async (_req, res) => {
   res.json({
     devices: s.devices.map(({ session, ...d }) => d),
     events: s.events,
-    messages: s.messages.map(({ session, ...m }) => m),
+    messages: s.messages.map(({ session, ...m }) => {
+      const legacyDevice = s.devices.find((d) => d.id === s.sessions[session] && m.time >= d.createdAt);
+      return { ...m, deviceId: m.deviceId || legacyDevice?.id };
+    }),
     matches: await store.matches(),
     metrics: await store.metrics(),
     integration,
@@ -57,13 +76,17 @@ app.post("/api/intake", async (req, res) => {
   const {
     description = "",
     owner = "You",
+    location = "",
+    email = "",
     role = "repair-target",
     photo,
     model,
     parts,
   } = req.body;
   if (
+    typeof email !== "string" || email.length > 254 || (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) ||
     typeof description !== "string" ||
+    typeof location !== "string" || location.length > 150 ||
     description.length > 2000 ||
     !["repair-target", "donor"].includes(role) ||
     (!description.trim() && !photo)
@@ -86,6 +109,8 @@ app.post("/api/intake", async (req, res) => {
   const device = await store.update((s) => {
     const d = addDevice(s, {
       owner: String(owner).slice(0, 80),
+      location: location.trim(),
+      email: email.trim(),
       model:
         typeof model === "string" && model.trim()
           ? model.trim().slice(0, 150)
@@ -111,6 +136,47 @@ app.post("/api/intake", async (req, res) => {
   res.json({ device, linkCode });
 });
 const inbound = createConversationHandler(store, photoSave);
+app.delete("/api/devices/:id", async (req, res) => {
+  const removed = await store.update((s) => {
+    if (!s.devices.some((d) => d.id === req.params.id)) return false;
+    s.devices = s.devices.filter((d) => d.id !== req.params.id);
+    for (const [key, value] of Object.entries(s.links)) if (value === req.params.id) delete s.links[key];
+    for (const [key, value] of Object.entries(s.sessions)) if (value === req.params.id) delete s.sessions[key];
+    return true;
+  });
+  res.status(removed ? 204 : 404).end();
+});
+app.patch("/api/devices/:id/contact", async (req, res) => {
+  const email = req.body.email;
+  if (typeof email !== "string" || email.length > 254 || (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))) {
+    res.status(400).json({ error: "Enter a valid email address or leave it blank." });
+    return;
+  }
+  const updated = await store.update((s) => {
+    const d = s.devices.find((d) => d.id === req.params.id);
+    if (!d) return false;
+    d.email = email.trim();
+    return true;
+  });
+  res.status(updated ? 204 : 404).end();
+});
+app.patch("/api/devices/:id", async (req, res) => {
+  const { model, parts, location } = req.body;
+  if (typeof model !== "string" || !model.trim() || model.length > 150 || typeof parts !== "string" || parts.length > 300 || typeof location !== "string" || location.length > 150) {
+    res.status(400).json({ error: "Enter a model, comma-separated parts, and a town or campus within the field limits." });
+    return;
+  }
+  const updated = await store.update((s) => {
+    const d = s.devices.find((d) => d.id === req.params.id);
+    if (!d) return false;
+    d.model = model.trim();
+    d.parts = [...new Set(parts.split(",").map((p: string) => p.trim().toLowerCase()).filter(Boolean))].slice(0, 12);
+    d.location = location.trim();
+    d.analysis = "manual";
+    return true;
+  });
+  res.status(updated ? 204 : 404).end();
+});
 const projectId = process.env.SPECTRUM_PROJECT_ID,
   projectSecret = process.env.SPECTRUM_PROJECT_SECRET;
 if (process.env.PHOTON_ENABLED === "true" && projectId && projectSecret)
@@ -128,6 +194,7 @@ if (process.env.PHOTON_ENABLED === "true" && projectId && projectSecret)
         "Photon connected. Text your assigned line a device photo or LINK command.";
       for await (const [space, message] of photon.messages) {
         if (message.direction === "outbound") continue;
+        console.info("Photon incoming", { type: message.content.type });
         try {
           const session = `photon:${space.id}:${message.sender?.id || "participant"}`;
           let reply = "";
@@ -144,7 +211,11 @@ if (process.env.PHOTON_ENABLED === "true" && projectId && projectSecret)
               await message.reply("Please send a photo smaller than 8 MB.");
               continue;
             }
-            const bytes = await message.content.read();
+            await message.reply("Photo received. Downloading it for your listing. Send your item description, name, town/campus and optional email next.");
+            const bytes = await Promise.race([
+              message.content.read(),
+              new Promise<never>((_resolve, reject) => { const timer = setTimeout(() => reject(Error("Photo download timed out")), 15000); timer.unref(); }),
+            ]);
             if (bytes.length > 8 * 1024 * 1024) {
               await message.reply("Please send a photo smaller than 8 MB.");
               continue;

@@ -59,7 +59,7 @@ Credentials stay on the backend in the ignored `.env` file.
 | `SPECTRUM_PROJECT_SECRET` | Photon project secret |
 | `PHOTON_ENABLED` | Set to `true` to receive iMessage intake |
 | `GEMINI_API_KEY` | Gemini text and image extraction |
-| `GEMINI_MODEL` | Model available to your account; default `gemini-3.8-flash` |
+| `GEMINI_MODEL` | Model available to your account; default `gemini-3.5-flash` |
 | `DATABASE_URL` | Tiger Data/Postgres connection string |
 | `DATABASE_SSL_CA_FILE` | Optional local CA certificate file for verified database TLS |
 

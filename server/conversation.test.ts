@@ -24,6 +24,36 @@ function setup() {
   );
   return { s, handler };
 }
+test("phone donor intake asks for contact details and saves explicit replies", async () => {
+  const { s, handler } = setup();
+  await handler("phone", "start", "DONATE");
+  assert.equal(s.devices.length, 0);
+  const reply = await handler("phone", "item", "Laptop screen available");
+  assert.equal(s.devices[0].role, "donor");
+  assert.match(reply, /NAME/);
+  assert.match(reply, /LOCATION/);
+  assert.match(reply, /EMAIL/);
+  await handler("phone", "name", "NAME Sam");
+  await handler("phone", "location", "LOCATION Chapel Hill");
+  await handler("phone", "email", "EMAIL SKIP");
+  assert.equal(s.devices[0].owner, "Sam");
+  assert.equal(s.devices[0].location, "Chapel Hill");
+  assert.equal(s.devices[0].emailDeclined, true);
+  await handler("phone", "bad-email", "EMAIL invalid");
+  assert.equal(s.devices[0].email, "");
+});
+test("phone photo is persisted before analysis and name updates the same listing", async () => {
+  const s = empty();
+  const handler = createConversationHandler({ read: async () => structuredClone(s), update: async (fn) => fn(s) }, async () => "/api/photos/saved", async () => {
+    assert.equal(s.devices[0].photo, "/api/photos/saved");
+    return { model: "Unverified device", description: "Photo received", parts: [], analysis: "pending" };
+  });
+  await handler("phone", "photo1", "", { mimeType: "image/jpeg", data: "test" });
+  await handler("phone", "name1", "NAME Alex");
+  assert.equal(s.devices.length, 1);
+  assert.equal(s.devices[0].owner, "Alex");
+  assert.equal(s.devices[0].photo, "/api/photos/saved");
+});
 test("website link is one-use and phone photo updates the same device", async () => {
   const { s, handler } = setup();
   const d = addDevice(s, {

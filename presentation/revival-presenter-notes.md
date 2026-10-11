@@ -6,9 +6,11 @@ Main slides: problem, demo example, solution, thank you/questions. Slides 5–11
 
 Two minutes of presentation, then two minutes for questions. Present slides 1–4 only. Stay on slide 4 during Q&A and jump to the relevant backup slide when asked.
 
-## Slide 1: The repair gap — 0:00–0:30
+## Slide 1: The scale of e-waste — 0:00–0:30
 
-“Revival starts with a broken laptop screen. The rest of the laptop may still be useful, and someone else may already have the part it needs. But those two people may never find each other. We can contact people across the world instantly. Useful things should not become waste because we could not make that connection. I built Revival to make a repair request or a donor offer as easy as sending a message.”
+“The UN reports that the world generated 62 million tonnes of electronic waste in 2022. Only 22.3 percent was documented as formally collected and recycled, and the total is projected to reach 82 million tonnes by 2030. Revival starts with one practical opportunity: finding a useful donor part before a device becomes waste. I built it to make a repair request or donor offer as easy as sending a message.”
+
+Source: [ITU / UNITAR, Global E-waste Monitor 2024](https://www.itu.int/en/ITU-D/Environment/Pages/Publications/The-Global-E-Waste-Monitor-2024.aspx). These figures describe global e-waste, not measured impact from Revival.
 
 ## Slide 2: A cracked laptop screen — 0:30–1:35
 
