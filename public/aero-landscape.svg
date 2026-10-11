@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1100" preserveAspectRatio="xMidYMax slice">
+<defs>
+<linearGradient id="sky" x2="0" y2="1"><stop stop-color="#99d8ff"/><stop offset=".6" stop-color="#e3f7ff"/><stop offset="1" stop-color="#a4e0f6"/></linearGradient>
+<linearGradient id="water" x2="0" y2="1"><stop stop-color="#84d9ed"/><stop offset="1" stop-color="#479cdb"/></linearGradient>
+<linearGradient id="hill" x2="0" y2="1"><stop stop-color="#b1e8c1"/><stop offset="1" stop-color="#6bc9b1"/></linearGradient>
+<radialGradient id="sun"><stop stop-color="#fff" stop-opacity=".95"/><stop offset=".3" stop-color="#fff" stop-opacity=".45"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient>
+<radialGradient id="bubble" cx=".3" cy=".2" r=".85"><stop stop-color="#fff" stop-opacity=".85"/><stop offset=".25" stop-color="#fff" stop-opacity=".08"/><stop offset=".75" stop-color="#5aaee0" stop-opacity=".12"/><stop offset="1" stop-color="#fff" stop-opacity=".55"/></radialGradient>
+<filter id="cloud"><feGaussianBlur stdDeviation="20"/></filter>
+</defs>
+<path fill="url(#sky)" d="M0 0H1600V1100H0Z"/>
+<circle cx="1200" cy="100" r="420" fill="url(#sun)"/>
+<g fill="#fff" opacity=".46" filter="url(#cloud)"><ellipse cx="260" cy="140" rx="270" ry="40"/><ellipse cx="1470" cy="270" rx="300" ry="50"/><ellipse cx="920" cy="460" rx="310" ry="36"/></g>
+<path d="M0 905Q200 790 430 895T900 910T1600 835V1100H0Z" fill="url(#hill)" opacity=".58"/>
+<path d="M0 977Q420 915 820 971T1600 925V1100H0Z" fill="url(#water)" opacity=".58"/>
+<g fill="none" stroke="#fff" opacity=".32"><path d="M0 1010Q400 966 800 1014T1600 994"/><path d="M0 1040Q500 1005 1000 1048T1600 1029"/><path d="M0 1076Q450 1033 850 1081T1600 1066"/></g>
+<g fill="url(#bubble)" stroke="#fff" stroke-opacity=".55"><circle cx="1510" cy="580" r="72"/><circle cx="1425" cy="704" r="28"/><circle cx="113" cy="655" r="40"/><circle cx="1300" cy="130" r="25"/></g>
+</svg>
