@@ -7,7 +7,7 @@
     "dev": "concurrently -k \"node --watch --env-file-if-exists=.env --import tsx server/index.ts\" \"vite --host 127.0.0.1\"",
     "build": "tsc --noEmit && vite build",
     "start": "node --env-file-if-exists=.env --import tsx server/index.ts",
-    "test": "node --import tsx --test server/engine.test.ts"
+    "test": "node --import tsx --test server/*.test.ts"
   },
   "dependencies": {
     "@google/genai": "^1.0.0",

@@ -1,64 +1,194 @@
-import express from 'express';
-import path from 'node:path';
-import { processMessage, recordEvent, type RepairState } from './engine.js';
-import { createStore } from './store.js';
-
+import express from "express";
+import path from "node:path";
+import { mkdir, writeFile } from "node:fs/promises";
+import { randomUUID, randomBytes } from "node:crypto";
+import { LiveStore, extract, addDevice } from "./live.js";
+import { createConversationHandler } from "./conversation.js";
 const app = express();
-app.use(express.json({ limit: '32kb' }));
-const store = createStore();
-console.log(`Storage: ${store.kind === 'tiger' ? 'Tiger Data (Postgres)' : 'local file data/state.json'}`);
-const integration = { photon: 'demo' as 'demo' | 'connecting' | 'live' | 'error', gemini: Boolean(process.env.GEMINI_API_KEY), storage: store.kind, detail: 'Simulated messages. No texts are sent.' };
-app.get('/api/state', async (_req, res) => {
-  const { sessions, processed, ...publicState } = await store.read();
-  res.json({ ...publicState, integration });
-});
-app.post('/api/message', async (req, res) => {
-  const { text, role } = req.body;
-  if (typeof text !== 'string' || !text.trim() || text.length > 2000 || !['donor', 'repairer'].includes(role)) { res.status(400).json({ error: 'Choose a role and enter a message under 2,000 characters.' }); return; }
-  const reply = await store.update(s => processMessage(s, { text, role, session: `demo-${role}`, channel: 'demo' }));
-  res.json({ reply });
-});
-app.post('/api/reset', async (_req, res) => { await store.reset(); res.json({ ok: true }); });
-app.get('/api/inventory', async (_req, res) => { res.json({ devices: await store.inventory() }); });
-app.post('/api/intake', async (req, res) => {
-  const { description } = req.body;
-  if (typeof description !== 'string' || !description.trim() || description.length > 2000) { res.status(400).json({ error: 'Describe the device in under 2,000 characters.' }); return; }
-  let intake: RepairState['intake'] = { model: 'Unverified device', symptom: description.trim(), source: 'manual' };
-  if (process.env.GEMINI_API_KEY) {
-    try {
-      const { GoogleGenAI } = await import('@google/genai');
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-      const result = await ai.models.generateContent({ model: process.env.GEMINI_MODEL || 'gemini-3.8-flash', contents: `Extract only the explicitly reported device model and symptoms from this user text. Do not diagnose, invent parts, or claim compatibility. Use "Unverified device" if no model is given. User text: ${JSON.stringify(description)}`, config: { responseMimeType: 'application/json', responseSchema: { type: 'OBJECT', properties: { model: { type: 'STRING' }, symptom: { type: 'STRING' } }, required: ['model', 'symptom'] } } });
-      const parsed = JSON.parse(result.text || '{}');
-      if (typeof parsed.model !== 'string' || typeof parsed.symptom !== 'string') throw new Error('Invalid extraction');
-      intake = { model: parsed.model.slice(0, 150), symptom: parsed.symptom.slice(0, 2000), source: 'gemini' };
-    } catch { res.status(502).json({ error: 'Gemini intake failed. Check your key and model, or remove the key to use manual intake.' }); return; }
+app.use(express.json({ limit: "12mb" }));
+const store = new LiveStore();
+const integration = {
+  photon: "connecting",
+  gemini: Boolean(process.env.GEMINI_API_KEY),
+  storage: store.kind,
+  detail: "Connecting to your Photon line…",
+};
+const allowed = [
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/heic",
+  "image/heif",
+];
+async function photoSave(photo?: { mimeType: string; data: string }) {
+  if (!photo) return undefined;
+  if (!allowed.includes(photo.mimeType) || typeof photo.data !== "string")
+    throw Error("Use a JPEG, PNG, WebP or HEIC photo.");
+  const bytes = Buffer.from(photo.data, "base64");
+  if (!bytes.length || bytes.length > 8 * 1024 * 1024)
+    throw Error("Photo must be under 8 MB.");
+  const id = randomUUID();
+  await mkdir("data/uploads", { recursive: true });
+  await writeFile(`data/uploads/${id}`, bytes);
+  return `/api/photos/${id}?type=${encodeURIComponent(photo.mimeType)}`;
+}
+app.get("/api/photos/:id", (req, res) => {
+  if (!/^[a-f0-9-]{36}$/.test(req.params.id)) {
+    res.sendStatus(404);
+    return;
   }
-  await store.update(s => { s.intake = intake; recordEvent(s, `Device submitted: ${intake.model}. Compatibility needs review.`); });
-  res.json({ intake });
+  const type = String(req.query.type);
+  res.type(allowed.includes(type) ? type : "application/octet-stream");
+  res.set("X-Content-Type-Options", "nosniff");
+  res.sendFile(path.resolve("data/uploads", req.params.id));
 });
-
-const spectrumProjectId = process.env.SPECTRUM_PROJECT_ID || process.env.PROJECT_ID;
-const spectrumProjectSecret = process.env.SPECTRUM_PROJECT_SECRET || process.env.PROJECT_SECRET;
-if (process.env.PHOTON_ENABLED === 'true' && spectrumProjectId && spectrumProjectSecret) {
-  integration.photon = 'connecting'; integration.detail = 'Connecting to Photon…';
+app.get("/api/state", async (_req, res) => {
+  const s = await store.read();
+  res.json({
+    devices: s.devices.map(({ session, ...d }) => d),
+    events: s.events,
+    messages: s.messages.map(({ session, ...m }) => m),
+    matches: await store.matches(),
+    metrics: await store.metrics(),
+    integration,
+  });
+});
+app.post("/api/intake", async (req, res) => {
+  const {
+    description = "",
+    owner = "You",
+    role = "repair-target",
+    photo,
+    model,
+    parts,
+  } = req.body;
+  if (
+    typeof description !== "string" ||
+    description.length > 2000 ||
+    !["repair-target", "donor"].includes(role) ||
+    (!description.trim() && !photo)
+  ) {
+    res.status(400).json({ error: "Add a description or photo." });
+    return;
+  }
+  const saved = await photoSave(photo);
+  let parsed;
+  try {
+    parsed = await extract(description, photo);
+  } catch {
+    res
+      .status(502)
+      .json({ error: "Gemini could not read this intake. Please try again." });
+    return;
+  }
+  const session = `web:${randomBytes(24).toString("hex")}`,
+    linkCode = randomBytes(12).toString("hex");
+  const device = await store.update((s) => {
+    const d = addDevice(s, {
+      owner: String(owner).slice(0, 80),
+      model:
+        typeof model === "string" && model.trim()
+          ? model.trim().slice(0, 150)
+          : parsed.model,
+      description: parsed.description,
+      parts:
+        typeof parts === "string" && parts.trim()
+          ? parts
+              .split(",")
+              .map((p: string) => p.trim().toLowerCase())
+              .filter(Boolean)
+              .slice(0, 12)
+          : parsed.parts,
+      role,
+      source: "website",
+      analysis: parsed.analysis,
+      session,
+      photo: saved,
+    });
+    s.links[linkCode] = d.id;
+    return d;
+  });
+  res.json({ device, linkCode });
+});
+const inbound = createConversationHandler(store, photoSave);
+const projectId = process.env.SPECTRUM_PROJECT_ID,
+  projectSecret = process.env.SPECTRUM_PROJECT_SECRET;
+if (process.env.PHOTON_ENABLED === "true" && projectId && projectSecret)
   void (async () => {
     try {
-      const { Spectrum } = await import('spectrum-ts');
-      const { imessage } = await import('spectrum-ts/providers/imessage');
-      const photon = await Spectrum({ projectId: spectrumProjectId, projectSecret: spectrumProjectSecret, providers: [imessage.config()] });
-      integration.photon = 'live'; integration.detail = 'Photon connected. Text your assigned line: DONOR or REPAIRER.';
+      const { Spectrum } = await import("spectrum-ts");
+      const { imessage } = await import("spectrum-ts/providers/imessage");
+      const photon = await Spectrum({
+        projectId,
+        projectSecret,
+        providers: [imessage.config()],
+      });
+      integration.photon = "live";
+      integration.detail =
+        "Photon connected. Text your assigned line a device photo or LINK command.";
       for await (const [space, message] of photon.messages) {
-        if (message.direction === 'outbound' || message.content.type !== 'text') continue;
-        const text = message.content.text;
-        const reply = await store.update(s => processMessage(s, { text, session: `photon-${space.id}`, channel: 'imessage', messageId: message.id }));
-        if (reply) await message.reply(reply);
+        if (message.direction === "outbound") continue;
+        try {
+          const session = `photon:${space.id}:${message.sender?.id || "participant"}`;
+          let reply = "";
+          if (message.content.type === "text")
+            reply = await inbound(session, message.id, message.content.text);
+          else if (message.content.type === "attachment") {
+            if (!allowed.includes(message.content.mimeType)) {
+              await message.reply(
+                "Please send a device photo: JPEG, PNG, WebP or HEIC.",
+              );
+              continue;
+            }
+            if ((message.content.size || 0) > 8 * 1024 * 1024) {
+              await message.reply("Please send a photo smaller than 8 MB.");
+              continue;
+            }
+            const bytes = await message.content.read();
+            if (bytes.length > 8 * 1024 * 1024) {
+              await message.reply("Please send a photo smaller than 8 MB.");
+              continue;
+            }
+            reply = await inbound(session, message.id, "", {
+              mimeType: message.content.mimeType,
+              data: bytes.toString("base64"),
+            });
+          }
+          if (reply) await message.reply(reply);
+        } catch {
+          await message.reply(
+            "I could not save that intake. Please retry in a moment.",
+          );
+        }
       }
-      integration.photon = 'error'; integration.detail = 'Photon stream closed. Restart the server to reconnect.';
-    } catch { integration.photon = 'error'; integration.detail = 'Photon connection failed. Check credentials, line access, and restart the server.'; console.error(integration.detail); }
+      integration.photon = "error";
+      integration.detail = "Photon stream closed. Restart the server.";
+    } catch {
+      integration.photon = "error";
+      integration.detail =
+        "Photon connection failed. Check your assigned line and credentials.";
+    }
   })();
+else {
+  integration.photon = "offline";
+  integration.detail = "Photon credentials are not configured.";
 }
-app.use(express.static(path.resolve('dist')));
-app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => { console.error(err.message); res.status(500).json({ error: 'The server could not save this change. Try again.' }); });
-const port = Number(process.env.PORT || 3001);
-app.listen(port, '127.0.0.1', () => console.log(`Lazarus backend: http://127.0.0.1:${port}`));
+app.use(express.static(path.resolve("dist")));
+app.use(
+  (
+    err: Error,
+    _req: express.Request,
+    res: express.Response,
+    _next: express.NextFunction,
+  ) => {
+    res.status(500).json({
+      error:
+        err.message.startsWith("Photo") || err.message.startsWith("Use a")
+          ? err.message
+          : "Unable to complete this request. Check server configuration and retry.",
+    });
+  },
+);
+app.listen(Number(process.env.PORT || 3001), "127.0.0.1", () =>
+  console.log("Hepha backend ready on localhost"),
+);

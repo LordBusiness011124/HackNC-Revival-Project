@@ -1,89 +1,561 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { ArrowDownLeft, ArrowRight, Check, ChevronDown, CircleHelp, Cpu, Leaf, MapPin, Maximize2, MessageCircle, Plus, Radio, RotateCcw, Send, ShieldCheck, Sparkles, Wrench, X, ZoomIn, ZoomOut } from 'lucide-react';
-import type { RepairState, Role } from '../server/engine';
-import type { InventoryDevice } from '../server/inventory';
-
-type State = Omit<RepairState, 'sessions' | 'processed'> & { integration: { photon: string; gemini: boolean; storage: 'tiger' | 'file'; detail: string } };
-function Laptop({ donor = false, small = false }: { donor?: boolean; small?: boolean }) {
-  return <svg className={`laptop ${small ? 'small' : ''}`} viewBox="0 0 240 150" aria-label={donor ? 'Donor laptop illustration' : 'Laptop with cracked display illustration'} role="img"><defs><linearGradient id={donor ? 'screen-d' : 'screen-r'} x2="1" y2="1"><stop stopColor={donor ? '#9de9ce' : '#c0f0f1'}/><stop offset="1" stopColor={donor ? '#52aca1' : '#75a5c5'}/></linearGradient></defs><path d="M52 18 Q52 11 60 11 H180 Q188 11 188 18 V109 H52Z" fill="#526b78"/><rect x="58" y="17" width="124" height="85" rx="3" fill={`url(#${donor ? 'screen-d' : 'screen-r'})`}/><path d="M59 83 Q95 32 126 65 T181 41 V101 H59Z" fill="#edfaff" opacity=".4"/><circle cx="157" cy="36" r="12" fill="#fff" opacity=".7"/>{!donor && <path d="M120 17 L113 47 L135 57 L102 76 L112 101 M113 47 L87 35 M135 57 L158 72" stroke="#f7ffff" strokeWidth="2" fill="none"/>}<path d="M52 109 H188 L222 132 Q225 138 214 138 H26 Q15 138 18 132Z" fill="#bdcbd1"/><path d="M58 114 H182 L198 129 H43Z" fill="#8199a5"/><path d="M90 115 H150 L154 123 H86Z" fill="#d6e1e5"/><path d="M18 132 H222" stroke="#ecf4f7" strokeWidth="3"/><path d="M101 134 H139" stroke="#76909d" strokeWidth="2"/></svg>;
-}
+import { useEffect, useState } from "react";
+import {
+  Cpu,
+  Leaf,
+  Plus,
+  MessageCircle,
+  ArrowRight,
+  Camera,
+  Radio,
+  Copy,
+  Link,
+  Database,
+  Sparkles,
+} from "lucide-react";
+import type { Device } from "../server/live";
+type State = {
+  devices: Device[];
+  events: { id: string; text: string; time: string }[];
+  messages: { id: string; text: string; sender: string; time: string }[];
+  matches: { target: string; donor: string; part: string; status: string }[];
+  metrics: {
+    devices: number;
+    photos: number;
+    messages: number;
+    timescale: boolean;
+    hourly: { hour: string; count: number }[];
+  };
+  integration: {
+    photon: string;
+    gemini: boolean;
+    storage: string;
+    detail: string;
+  };
+};
 export default function App() {
-  const [state, setState] = useState<State | null>(null);
-  const [error, setError] = useState('');
-  const [connectionError, setConnectionError] = useState('');
-  const [role, setRole] = useState<Role>('donor');
-  const [text, setText] = useState('');
+  const [state, setState] = useState<State>();
+  const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [modal, setModal] = useState<'intake' | 'help' | 'reset' | null>(null);
-  const [description, setDescription] = useState('');
-  const [zoom, setZoom] = useState(1);
-  const [selected, setSelected] = useState('device');
-  const [tab, setTab] = useState<'map' | 'inventory'>('map');
-  const [inventory, setInventory] = useState<InventoryDevice[] | null>(null);
-  const chatEnd = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!modal) return;
-    const previous = document.activeElement as HTMLElement | null;
-    const dialog = document.querySelector<HTMLElement>('.modal');
-    const focusables = () => Array.from(dialog?.querySelectorAll<HTMLElement>('button:not(:disabled), input, textarea, select, a[href]') || []);
-    focusables()[0]?.focus();
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setModal(null);
-      if (e.key === 'Tab') {
-        const items = focusables(); const first = items[0]; const last = items[items.length - 1];
-        if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus(); }
-        else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus(); }
-      }
-    };
-    document.addEventListener('keydown', onKey);
-    return () => { document.removeEventListener('keydown', onKey); previous?.focus(); };
-  }, [modal]);
+  const [show, setShow] = useState(false);
+  const [owner, setOwner] = useState("");
+  const [description, setDescription] = useState("");
+  const [model, setModel] = useState("");
+  const [parts, setParts] = useState("");
+  const [role, setRole] = useState("repair-target");
+  const [photo, setPhoto] = useState<{ mimeType: string; data: string }>();
+  const [preview, setPreview] = useState("");
+  const [links, setLinks] = useState<Record<string, string>>(() => {
+    try {
+      return JSON.parse(localStorage.getItem("hepha-links") || "{}");
+    } catch {
+      return {};
+    }
+  });
+  const [selected, setSelected] = useState("");
   async function refresh() {
-    const res = await fetch('/api/state');
-    if (!res.ok) throw new Error('Backend unavailable. Make sure npm run dev is running.');
-    setState(await res.json());
-    setConnectionError('');
+    const r = await fetch("/api/state");
+    if (!r.ok)
+      throw Error(
+        "Unable to connect to storage. If DATABASE_URL is set, check your Tiger Data connection.",
+      );
+    setState(await r.json());
   }
   useEffect(() => {
-    const tick = () => refresh().catch(e => setConnectionError(e.message));
-    tick(); const id = setInterval(tick, 1500); return () => clearInterval(id);
+    const tick = () => refresh().catch((e) => setError(e.message));
+    tick();
+    const timer = setInterval(tick, 2000);
+    return () => clearInterval(timer);
   }, []);
-  useEffect(() => {
-    fetch('/api/inventory').then(res => res.ok ? res.json() : Promise.reject()).then(data => setInventory(data.devices)).catch(() => setInventory([]));
-  }, []);
-  const messages = state?.messages.filter(m => m.role === role) || [];
-  useEffect(() => {
-    const chat = chatEnd.current?.parentElement;
-    chat?.scrollTo({ top: chat.scrollHeight, behavior: 'smooth' });
-  }, [state?.messages.length, role]);
-  async function post(url: string, body: object) {
-    setBusy(true); setError('');
-    try { const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); const data = await res.json(); if (!res.ok) throw new Error(data.error); await refresh(); return true; }
-    catch (e) { setError(e instanceof Error ? e.message : 'Something went wrong. Try again.'); return false; }
-    finally { setBusy(false); }
+  async function upload(file?: File) {
+    if (!file) return;
+    if (file.size > 8 * 1024 * 1024) {
+      setError("Choose a photo under 8 MB.");
+      return;
+    }
+    const data = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+    setPhoto({
+      mimeType:
+        file.type || (/\.heic$/i.test(file.name) ? "image/heic" : "image/jpeg"),
+      data: data.split(",")[1],
+    });
+    setPreview(data);
   }
-  async function send(value: string) { if (!value.trim() || busy) return; if (await post('/api/message', { text: value, role })) setText(''); }
-  const confirmed = Number(state?.donor || false) + Number(state?.repairer || false);
-  const ready = confirmed === 2;
-  return <div className="app-shell">
-    <aside className="rail"><a className="brand-mark" href="#" aria-label="Lazarus home"><Leaf size={25}/></a><button className={tab === 'map' ? 'rail-button active' : 'rail-button'} aria-label="Resurrection map" onClick={() => setTab('map')}><Sparkles size={21}/></button><button className={tab === 'inventory' ? 'rail-button active' : 'rail-button'} aria-label="Device inventory" onClick={() => setTab('inventory')}><Cpu size={21}/></button><div className="rail-spacer"/><button className="rail-button" aria-label="How Lazarus works" onClick={() => setModal('help')}><CircleHelp size={20}/></button><span className="avatar me">Y</span></aside>
-    <div className="workspace"><header className="topbar"><a href="#" className="wordmark">lazarus<span>↗</span></a><span className="tagline">GOOD THINGS DESERVE A SECOND LIFE.</span><div className="topbar-right"><span className="campus"><span className="status-dot"/> Campus demo network</span><button className="subtle-button" onClick={() => setModal('help')}>How it works <ArrowRight size={14}/></button></div></header>
-      <main><section className="heading"><div><div className="eyebrow"><span className="tiny-spark">✳</span> THE COMMUNITY REPAIR LAB</div><h1>A second life starts here<span>.</span></h1><p>Connect the parts. Find the people. Bring something back.</p></div><button className="primary-button" onClick={() => setModal('intake')}><Plus size={17}/> Add a device</button></section>
-      <section className="stats"><div><span className="stat-icon mint"><Cpu size={20}/></span><div><strong>03 <small>devices in the lab</small></strong><span>Seeded demo inventory</span></div></div><div><span className="stat-icon blue"><Sparkles size={20}/></span><div><strong>01 <small>possible resurrection</small></strong><span>A screen away from a second life</span></div></div><div><span className="stat-icon peach"><Wrench size={20}/></span><div><strong>0{confirmed} <small>contributions confirmed</small></strong><span>{ready ? 'Ready to arrange the repair' : `${2 - confirmed} more to make this happen`}</span></div></div><div className="impact-stat"><Leaf size={24}/><div><strong>Keep good parts in circulation.</strong><span>Physical repairs and impact are not yet recorded.</span></div></div></section>
-      {(error || connectionError) && <div className="error" role="alert">{error || connectionError}<button aria-label="Dismiss error" onClick={() => { setError(''); setConnectionError(''); }}><X size={16}/></button></div>}
-      <div className="lab-layout"><div className="left-column"><section className="map-panel"><div className="panel-header"><div className="tabs"><button className={tab === 'map' ? 'selected' : ''} onClick={() => setTab('map')}>Resurrection map</button><button className={tab === 'inventory' ? 'selected' : ''} onClick={() => setTab('inventory')}>Inventory <span>{inventory?.length ?? '…'}</span></button></div><span className="map-label"><span className="status-dot"/> {ready ? 'PLAN READY' : 'LIVE DEMO'}</span></div>
-      {tab === 'map' ? <div className="map-canvas"><div className="map-caption"><span className="pill">REPAIR LZ-001</span><span>One device. A few good connections.</span></div><div className="graph" style={{ transform: `scale(${zoom})` }}><svg className="connections" viewBox="0 0 800 460" preserveAspectRatio="none" aria-hidden="true"><path className={state?.donor ? 'confirmed' : ''} d="M240 134 C355 134 250 245 380 245"/><path className={state?.repairer ? 'confirmed' : ''} d="M580 120 C475 120 565 245 440 245"/><path className={ready ? 'confirmed' : ''} d="M408 280 C408 343 555 340 578 370"/><circle cx="296" cy="173" r="4"/><circle cx="521" cy="167" r="4"/></svg>
-        <button className={`graph-card donor-card ${selected === 'donor' ? 'focused' : ''}`} onClick={() => setSelected('donor')}><div className="node-heading"><span className="node-kind"><Cpu size={12}/> DONOR DEVICE</span><span className={`mini-dot ${state?.donor ? 'green' : ''}`}/></div><Laptop donor small/><strong>A little broken. A lot to give.</strong><span className="node-model">DemoBook 14 · Donor unit</span><div className="component"><span className="status-dot"/> Display available <ArrowDownLeft size={13}/></div><div className="node-footer"><span className="avatar">M</span> Maya · demo donor <span className={state?.donor ? 'node-state done' : 'node-state'}>{state?.donor ? 'Confirmed' : 'Awaiting'}</span></div></button>
-        <button className={`graph-card repairer-card ${selected === 'repairer' ? 'focused' : ''}`} onClick={() => setSelected('repairer')}><span className="node-kind"><Wrench size={12}/> REPAIR VOLUNTEER</span><div className="volunteer"><span className="avatar large">J</span><div><strong>Jamie</strong><span>Campus repair club · demo</span></div></div><div className="skill-tags"><span>Screen swaps</span><span>Tools available</span></div><div className="node-footer"><span className="status-dot"/> Volunteer contribution <span className={state?.repairer ? 'node-state done' : 'node-state'}>{state?.repairer ? 'Confirmed' : 'Awaiting'}</span></div></button>
-        <button className={`graph-card recipient-card ${selected === 'device' ? 'focused' : ''}`} onClick={() => setSelected('device')}><div className="node-heading"><span className="node-kind"><Sparkles size={12}/> DEVICE TO REVIVE</span><span className="repair-number">01</span></div><Laptop/><strong>Still has a lot of life in it.</strong><span className="node-model">DemoBook 14 · Cracked display</span><div className="needs"><span className="need-tag">Needs a screen</span><span className="need-tag">Needs a repairer</span></div><div className="node-footer"><span className="avatar blue-avatar">A</span> Alex · demo owner <span className={ready ? 'node-state done' : 'node-state'}>{ready ? 'Plan ready' : 'Matching'}</span></div></button>
-        <div className={`outcome-node ${ready ? 'ready' : ''}`}><span className="outcome-icon"><Leaf size={22}/></span><div><strong>{ready ? 'A new beginning is lined up.' : 'A new beginning, within reach.'}</strong><span>{ready ? 'Contributions confirmed. Repair still pending.' : 'Confirm the people to complete the plan.'}</span></div></div></div>
-        <div className="map-bottom"><div className="legend"><span><i className="legend-dot mint-dot"/>Available contribution</span><span><i className="legend-line"/>Proposed connection</span></div><div className="zoom-controls"><button aria-label="Zoom out" onClick={() => setZoom(z => Math.max(.75, z - .1))}><ZoomOut size={16}/></button><span>{Math.round(zoom * 100)}%</span><button aria-label="Zoom in" onClick={() => setZoom(z => Math.min(1.15, z + .1))}><ZoomIn size={16}/></button><button aria-label="Reset map zoom" onClick={() => setZoom(1)}><Maximize2 size={15}/></button></div></div></div> : <div className="inventory"><h2>Every device has something to give.</h2><p>Fictional models and conditions for this prototype.</p>{inventory === null ? <p>Loading inventory…</p> : inventory.length === 0 ? <p>No devices yet, or the inventory could not be loaded.</p> : inventory.map(d => <div className="inventory-row" key={d.id}><span className="stat-icon blue"><Cpu size={21}/></span><div><strong>{d.owner}’s {d.model}</strong><span>{d.condition} · {d.role === 'repair-target' ? 'Repair target' : d.role === 'donor' ? 'Donor device' : 'Unmatched'}</span><small>Available parts: {d.parts.filter(p => p.status === 'available').map(p => p.name).join(', ') || 'None'}</small><small><MapPin size={11}/> {d.location.name}</small></div><span className="pill">DEMO</span></div>)}</div>}
-      <div className="map-note"><ShieldCheck size={14}/><span>Curated demo compatibility. A real part match requires a verified part number and connector check.</span></div></section>
-      <section className="activity-panel"><div className="section-heading"><h2><Radio size={16}/> Around the lab</h2><button onClick={() => setModal('reset')} className="text-button"><RotateCcw size={13}/> Reset demo</button></div><div className="activity-list">{state?.events.slice(0, 3).map((event, i) => <div className="activity" key={event.id}><span className={`event-dot ${i === 0 ? 'latest' : ''}`}/><p>{event.text}</p><time>{new Date(event.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></div>)}</div></section>
-      </div><aside className="right-column"><section className="plan-panel"><div className="eyebrow">THE RESURRECTION PLAN <span>LZ-001</span></div><h2>{selected === 'donor' ? 'One screen. A second chance.' : selected === 'repairer' ? 'The person who makes it happen.' : 'Let’s bring this one back.'}</h2><p>{selected === 'donor' ? 'Maya’s donor unit has the display our demo repair needs.' : selected === 'repairer' ? 'Jamie contributes screen repair experience and a tool kit.' : 'A donor screen and a helping hand can put Alex’s laptop back to work.'}</p><div className="progress-heading"><span>{ready ? 'All contributions confirmed' : 'Gathering the right people'}</span><strong>{confirmed}/2</strong></div><div className="progress-track"><span style={{ width: `${confirmed * 50}%` }}/></div><div className="requirements"><div><span className={`requirement-icon ${state?.donor ? 'complete' : ''}`}>{state?.donor ? <Check size={15}/> : <Cpu size={15}/>}</span><div><strong>Compatible screen</strong><span>Maya’s donor DemoBook 14</span></div><span className={state?.donor ? 'status-tag done' : 'status-tag'}>{state?.donor ? 'Reserved' : 'Pending'}</span></div><div><span className={`requirement-icon ${state?.repairer ? 'complete' : ''}`}>{state?.repairer ? <Check size={15}/> : <Wrench size={15}/>}</span><div><strong>Repairer + tools</strong><span>Jamie · Precision screwdriver kit</span></div><span className={state?.repairer ? 'status-tag done' : 'status-tag'}>{state?.repairer ? 'Confirmed' : 'Pending'}</span></div></div><div className={`plan-summary ${ready ? 'complete' : ''}`}><Sparkles size={16}/><div><strong>{ready ? 'Repair plan ready' : 'The parts fit. Now the people.'}</strong><span>{ready ? 'Arrange a time, perform the repair, then test the display.' : 'Try the conversation below to confirm each contribution.'}</span></div></div></section>
-      <section className="chat-panel"><div className="chat-heading"><span className="chat-logo"><MessageCircle size={19}/></span><div><h2>Lazarus messages</h2><span>{state?.integration.photon === 'live' ? 'Photon connected · demo chat below' : 'Demo chat · no texts sent'}</span></div><span className="chat-mode">DEMO</span></div><div className="role-picker"><span>Chat as</span><label><select aria-label="Chat participant" value={role} onChange={e => setRole(e.target.value as Role)}><option value="donor">Maya · Donor</option><option value="repairer">Jamie · Repairer</option></select><ChevronDown size={13}/></label></div><div className="chat-messages" aria-live="polite">{messages.length === 0 && <><div className="chat-date">DEMO CONVERSATION</div><div className="bubble assistant">{role === 'donor' ? 'Hey Maya! Your donor screen could give Alex’s laptop a second life. Want to help?' : 'Hey Jamie! We found a screen for Alex’s laptop. Can you help with the repair?'}</div><div className="chat-hint">Send a message or try a quick reply below.</div></>}{messages.map(m => <div key={m.id} className={`bubble ${m.sender === 'user' ? 'user' : 'assistant'}`}><span>{m.text}</span>{m.channel === 'imessage' && <small>via iMessage</small>}</div>)}<div ref={chatEnd}/></div><div className="quick-replies"><button disabled={busy} onClick={() => void send(role === 'donor' ? 'I can donate the screen' : 'I am a repairer')}>Offer help</button><button disabled={busy} onClick={() => void send('yes')}>Yes, confirm <Check size={12}/></button><button disabled={busy} onClick={() => void send('cancel')}>Withdraw</button></div><form className="message-form" onSubmit={e => { e.preventDefault(); void send(text); }}><input aria-label="Message Lazarus" placeholder="Message Lazarus…" value={text} maxLength={2000} onChange={e => setText(e.target.value)}/><button disabled={busy || !text.trim()} aria-label="Send message"><Send size={16}/></button></form><div className="integration-info"><span className={`status-dot ${state?.integration.photon === 'live' ? '' : 'amber'}`}/>{state?.integration.detail || 'Connecting to local backend…'}</div></section></aside></div>
-      {state?.intake && <section className="intake-result"><Cpu size={20}/><div><strong>{state.intake.model}</strong><p>{state.intake.symptom}</p><span>{state.intake.source === 'gemini' ? 'Structured with Gemini' : 'Manual intake'} · Awaiting compatibility review. Not added to the seeded match.</span></div></section>}
-      <footer><span><Leaf size={13}/> Less waste. More possibility.</span><span>Lazarus · Built for a second life <span className="footer-dot">•</span> Prototype / seeded inventory{state && ` · ${state.integration.storage === 'tiger' ? 'Saved in Tiger Data' : 'Saved locally'}`}</span></footer></main></div>
-    {modal && <div className="modal-backdrop" onClick={() => !busy && setModal(null)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" onClick={e => e.stopPropagation()}><button className="modal-close" aria-label="Close dialog" onClick={() => setModal(null)}><X size={20}/></button><span className="stat-icon mint"><Leaf size={24}/></span><h2 id="modal-title">{modal === 'intake' ? 'What can we bring back?' : modal === 'reset' ? 'Start the demo again?' : 'Scattered parts. One repair plan.'}</h2>{modal === 'intake' ? <form onSubmit={async e => { e.preventDefault(); if (await post('/api/intake', { description })) { setDescription(''); setModal(null); } }}><p>Tell us the model and what’s broken. {state?.integration.gemini ? 'Gemini will structure your description.' : 'Manual intake is ready. Add a Gemini key to enable AI extraction.'}</p><label className="input-label" htmlFor="description">Device description</label><textarea id="description" autoFocus required maxLength={2000} value={description} onChange={e => setDescription(e.target.value)} placeholder="My laptop is a ThinkPad T480. The screen is cracked, but it still powers on."/><p className="fine-print">New submissions need compatibility review. This demo’s repair map uses a fixed, fictional inventory.</p>{error && <p className="modal-error" role="alert">{error}</p>}<button className="primary-button" disabled={busy || !description.trim()}>{busy ? 'Saving…' : 'Submit device'}<ArrowRight size={16}/></button></form> : modal === 'reset' ? <><p>This clears confirmations, chat history, and device intake for everyone connected to this local demo.</p><button disabled={busy} className="primary-button" onClick={async () => { if (await post('/api/reset', {})) setModal(null); }}>Reset demo <RotateCcw size={16}/></button></> : <><p>Lazarus connects a device that needs repair with a donor part and a volunteer who has the tools.</p><ol><li>Select a node to explore its contribution.</li><li>Use demo chat as the donor and confirm the screen.</li><li>Switch to the repairer and confirm their help.</li><li>The map lights up when both contributions are confirmed.</li></ol><div className="help-note">Real iMessage: add Photon credentials and enable it in .env, then text your line DONOR or REPAIRER followed by YES. Live messages appear here with a “via iMessage” label.</div><button className="primary-button" onClick={() => setModal(null)}>Explore the lab <ArrowRight size={16}/></button></>}</section></div>}
-  </div>;
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      const r = await fetch("/api/intake", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          owner: owner || "You",
+          description,
+          role,
+          photo,
+          model,
+          parts,
+        }),
+      });
+      const data = await r.json();
+      if (!r.ok) throw Error(data.error);
+      const next = { ...links, [data.device.id]: data.linkCode };
+      setLinks(next);
+      localStorage.setItem("hepha-links", JSON.stringify(next));
+      setSelected(data.device.id);
+      setShow(false);
+      setDescription("");
+      setModel("");
+      setParts("");
+      setPhoto(undefined);
+      setPreview("");
+      await refresh();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  const device =
+    state?.devices.find((d) => d.id === selected) || state?.devices.at(-1);
+  const matches =
+    state?.matches.filter(
+      (m) => m.target === device?.id || m.donor === device?.id,
+    ) || [];
+  return (
+    <div className="app-shell">
+      <aside className="rail">
+        <span className="brand-mark">
+          <Leaf />
+        </span>
+        <span className="rail-button active">
+          <Sparkles />
+        </span>
+        <div className="rail-spacer" />
+        <span className="rail-button">
+          <Database />
+        </span>
+      </aside>
+      <div className="workspace">
+        <header className="topbar">
+          <a href="#" className="wordmark">
+            hepha<span>↗</span>
+          </a>
+          <span className="tagline">GOOD THINGS DESERVE A SECOND LIFE.</span>
+          <span className="campus">
+            <span className="status-dot" /> Your repair network
+          </span>
+        </header>
+        <main>
+          <section className="heading">
+            <div>
+              <div className="eyebrow">THE COMMUNITY REPAIR LAB</div>
+              <h1>
+                A second life starts here<span>.</span>
+              </h1>
+              <p>
+                Start on the web. Send a photo. Keep the conversation going in
+                iMessage.
+              </p>
+            </div>
+            <button className="primary-button" onClick={() => setShow(true)}>
+              <Plus size={17} />
+              Add a device
+            </button>
+          </section>
+          <section className="stats">
+            <div>
+              <span className="stat-icon blue">
+                <Cpu />
+              </span>
+              <div>
+                <strong>
+                  {state?.metrics.devices || 0} <small>real devices</small>
+                </strong>
+                <span>Submitted to this network</span>
+              </div>
+            </div>
+            <div>
+              <span className="stat-icon mint">
+                <Camera />
+              </span>
+              <div>
+                <strong>
+                  {state?.metrics.photos || 0} <small>device photos</small>
+                </strong>
+                <span>Website and iMessage intake</span>
+              </div>
+            </div>
+            <div>
+              <span className="stat-icon blue">
+                <Link />
+              </span>
+              <div>
+                <strong>
+                  {state?.matches.length || 0}{" "}
+                  <small>candidate connections</small>
+                </strong>
+                <span>Human compatibility check needed</span>
+              </div>
+            </div>
+            <div>
+              <span className="stat-icon blue">
+                <Database />
+              </span>
+              <div>
+                <strong>
+                  {state?.integration.storage === "tiger"
+                    ? "Tiger Data"
+                    : "Local storage"}
+                </strong>
+                <span>
+                  {state?.metrics.timescale
+                    ? "Timescale activity tracking active"
+                    : state?.integration.storage === "tiger"
+                      ? "Postgres activity tracking"
+                      : "Add DATABASE_URL to enable Tiger Data"}
+                </span>
+              </div>
+            </div>
+          </section>
+          {error && (
+            <div className="error" role="alert">
+              {error}
+              <button onClick={() => setError("")}>Dismiss</button>
+            </div>
+          )}
+          <div className="lab-layout">
+            <div className="left-column">
+              <section className="map-panel">
+                <div className="panel-header">
+                  <h2>Resurrection map</h2>
+                  <span className="pill">LIVE INTAKE</span>
+                </div>
+                <div className="real-map">
+                  {!state?.devices.length ? (
+                    <div className="empty-network">
+                      <Sparkles size={44} />
+                      <h2>Your network starts with one device.</h2>
+                      <p>
+                        Add a broken device or a donor unit. Real submissions
+                        appear here as they arrive.
+                      </p>
+                      <button
+                        className="primary-button"
+                        onClick={() => setShow(true)}
+                      >
+                        Start a repair <ArrowRight size={16} />
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="device-grid">
+                        {state.devices.map((d) => (
+                          <button
+                            key={d.id}
+                            className={`real-device ${device?.id === d.id ? "chosen" : ""}`}
+                            onClick={() => setSelected(d.id)}
+                          >
+                            {d.photo ? (
+                              <img src={d.photo} alt={`Submitted ${d.model}`} />
+                            ) : (
+                              <div className="device-placeholder">
+                                <Cpu size={48} />
+                              </div>
+                            )}
+                            <span className="node-kind">
+                              {d.role === "donor"
+                                ? "DONOR DEVICE"
+                                : "DEVICE TO REVIVE"}{" "}
+                              · {d.id}
+                            </span>
+                            <strong>{d.model}</strong>
+                            <span>
+                              {d.owner} · {d.source}
+                            </span>
+                            <p>{d.description}</p>
+                            {d.analysis === "pending" && (
+                              <small>
+                                AI unavailable · saved for manual review
+                              </small>
+                            )}
+                            <div className="skill-tags">
+                              {d.parts.map((p) => (
+                                <span key={p}>
+                                  {d.role === "donor" ? "Offers" : "Needs"} {p}
+                                </span>
+                              ))}
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                      {state.matches.length > 0 && (
+                        <div className="connection-list">
+                          <h3>Possible connections</h3>
+                          {state.matches.map((m, i) => (
+                            <div key={i}>
+                              <span>{m.donor}</span>
+                              <ArrowRight size={18} />
+                              <strong>{m.part}</strong>
+                              <ArrowRight size={18} />
+                              <span>{m.target}</span>
+                              <small>
+                                Review exact part number, connector and
+                                condition before reserving.
+                              </small>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+                <div className="map-note">
+                  Photos help identify devices. They do not establish part
+                  compatibility or working condition.
+                </div>
+              </section>
+              <section className="activity-panel">
+                <h2>
+                  <Radio size={16} /> Around the lab
+                </h2>
+                {!state?.events.length && (
+                  <p>No activity yet. Your first intake will appear here.</p>
+                )}
+                {state?.events.slice(0, 8).map((e) => (
+                  <div className="activity" key={e.id}>
+                    <span className="event-dot latest" />
+                    <p>{e.text}</p>
+                    <time>
+                      {new Date(e.time).toLocaleTimeString([], {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </time>
+                  </div>
+                ))}
+              </section>
+            </div>
+            <aside className="right-column">
+              <section className="plan-panel">
+                <div className="eyebrow">CONTINUE ON YOUR PHONE</div>
+                <h2>One device. One conversation.</h2>
+                <p>
+                  Take a photo of your device or its model label and send it to
+                  your Photon iMessage line. Gemini reads the photo, asks for
+                  missing details and saves it here.
+                </p>
+                <div className="integration-info">
+                  <span
+                    className={`status-dot ${state?.integration.photon === "live" ? "" : "amber"}`}
+                  />
+                  {state?.integration.detail || "Connecting…"}
+                </div>
+                {device && (
+                  <>
+                    <h3>{device.model}</h3>
+                    <p>
+                      {device.id} · {matches.length} candidate connection(s)
+                    </p>
+                    {device.phoneConnected ? (
+                      <p className="help-note">
+                        Connected to iMessage. Send your next photo in the same
+                        phone thread.
+                      </p>
+                    ) : links[device.id] ? (
+                      <div className="link-box">
+                        <p>
+                          Text this command to your Photon line to connect this
+                          website intake:
+                        </p>
+                        <code>LINK {links[device.id]}</code>
+                        <button
+                          className="subtle-button"
+                          onClick={() =>
+                            navigator.clipboard
+                              .writeText(`LINK ${links[device.id]}`)
+                              .catch(() =>
+                                setError("Copy the LINK command manually."),
+                              )
+                          }
+                        >
+                          <Copy size={14} /> Copy command
+                        </button>
+                      </div>
+                    ) : (
+                      <p>
+                        This device was submitted through iMessage or from
+                        another browser.
+                      </p>
+                    )}
+                  </>
+                )}
+                <div className="help-note">
+                  Text <strong>STATUS</strong> for an update,{" "}
+                  <strong>NEW</strong> for another device, or{" "}
+                  <strong>DONATE</strong> followed by the model and parts you
+                  can offer. Send photos directly in the same thread.
+                </div>
+              </section>
+              <section className="chat-panel">
+                <div className="chat-heading">
+                  <MessageCircle />
+                  <div>
+                    <h2>Live iMessage activity</h2>
+                    <span>Actual inbound messages and replies</span>
+                  </div>
+                </div>
+                <div className="chat-messages">
+                  {!state?.messages.length && (
+                    <p className="chat-hint">
+                      Send a photo or LINK command to your Photon line. The
+                      actual conversation will appear here.
+                    </p>
+                  )}
+                  {state?.messages.slice(-15).map((m) => (
+                    <div
+                      key={m.id}
+                      className={`bubble ${m.sender === "user" ? "user" : "assistant"}`}
+                    >
+                      <span>{m.text}</span>
+                      <small>
+                        {new Date(m.time).toLocaleTimeString()} · iMessage
+                      </small>
+                    </div>
+                  ))}
+                </div>
+              </section>
+              {Boolean(state?.metrics.hourly.length) && (
+                <section className="activity-panel">
+                  <h3>Tiger Data · last 24 hours</h3>
+                  {state?.metrics.hourly.map((h) => (
+                    <p key={h.hour}>
+                      {new Date(h.hour).toLocaleTimeString([], {
+                        hour: "2-digit",
+                      })}
+                      : {h.count} messages
+                    </p>
+                  ))}
+                </section>
+              )}
+            </aside>
+          </div>
+          <footer>
+            <span>
+              <Leaf size={13} /> Less waste. More possibility.
+            </span>
+            <span>Hepha · Community repair in motion</span>
+          </footer>
+        </main>
+      </div>
+      {show && (
+        <div className="modal-backdrop">
+          <section
+            className="modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="intake-title"
+          >
+            <button
+              className="modal-close"
+              onClick={() => !busy && setShow(false)}
+              aria-label="Close"
+            >
+              ×
+            </button>
+            <h2 id="intake-title">What can we bring back?</h2>
+            <form onSubmit={submit}>
+              <label>
+                Your name
+                <input
+                  value={owner}
+                  onChange={(e) => setOwner(e.target.value)}
+                  maxLength={80}
+                />
+              </label>
+              <label>
+                Device purpose
+                <select value={role} onChange={(e) => setRole(e.target.value)}>
+                  <option value="repair-target">I need a repair</option>
+                  <option value="donor">I can offer a donor device</option>
+                </select>
+              </label>
+              <label>
+                Tell us about the device
+                <textarea
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  maxLength={2000}
+                  placeholder="Model, what is broken, or which tested parts you can offer"
+                />
+              </label>
+              <div className="photo-buttons">
+                <label className="subtle-button">
+                  <Camera size={16} /> Take a photo
+                  <input
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    onChange={(e) => void upload(e.target.files?.[0])}
+                  />
+                </label>
+                <label className="subtle-button">
+                  Upload photo
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => void upload(e.target.files?.[0])}
+                  />
+                </label>
+              </div>
+              {preview && (
+                <img
+                  className="intake-photo"
+                  src={preview}
+                  alt="Photo to submit"
+                />
+              )}
+              <details>
+                <summary>Known model and parts (optional)</summary>
+                <label>
+                  Exact model
+                  <input
+                    value={model}
+                    onChange={(e) => setModel(e.target.value)}
+                    maxLength={150}
+                  />
+                </label>
+                <label>
+                  {role === "donor" ? "Offered parts" : "Needed parts"}
+                  <input
+                    value={parts}
+                    onChange={(e) => setParts(e.target.value)}
+                    placeholder="screen, battery"
+                    maxLength={300}
+                  />
+                </label>
+              </details>
+              <p className="fine-print">
+                Gemini extracts visible details. You can continue with photos
+                and messages from your phone.
+              </p>
+              {error && <p role="alert">{error}</p>}
+              <button
+                className="primary-button"
+                disabled={busy || (!description.trim() && !photo)}
+              >
+                {busy ? "Reading and saving…" : "Add real device"}
+                <ArrowRight size={16} />
+              </button>
+            </form>
+          </section>
+        </div>
+      )}
+    </div>
+  );
 }

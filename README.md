@@ -1,10 +1,10 @@
-# Lazarus
+# Hepha
 
-A community repair lab that connects a broken device, a donor part, and a repair volunteer. The map updates as people confirm or withdraw their contributions.
+A community repair network named for Hephaestus. Start with a real device on the website, link it to an iMessage conversation, and send photos from your phone. Gemini extracts the visible model and condition. The map shows real submissions and potential donor-part connections.
 
-## Run locally
+## Run
 
-Requires Node.js 22 or newer.
+Requires Node.js 22+.
 
 ```sh
 npm install
@@ -12,56 +12,36 @@ cp .env.example .env
 npm run dev
 ```
 
-Open the Local URL printed by Vite, usually http://127.0.0.1:5173. The backend runs on port 3001. State saves to the ignored `data/state.json` file.
+Open http://127.0.0.1:5173. Existing local credentials stay in `.env`; do not overwrite them. The backend binds to localhost and keeps photos and fallback state in ignored `data/` files.
 
-## Store data in Tiger Data
+## Test with your phone
 
-By default, state saves to `data/state.json`. To use a Tiger Data (TimescaleDB/Postgres) database instead:
+1. Add your device with its model, symptoms and an optional photo.
+2. Copy its `LINK` command and text it to your assigned Photon line.
+3. Take a photo of the device or model label and send it in that same iMessage thread.
+4. The device updates on the website. Text `STATUS` for details or `NEW` to submit another device.
 
-1. Create a free service at [console.cloud.timescale.com](https://console.cloud.timescale.com).
-2. Copy its connection string into `.env`:
+You can also start directly in iMessage: send a photo or a description. To offer a donor device, send `DONATE` followed by its model and the parts you can offer. Photo attachments support JPEG, PNG, WebP, HEIC and HEIF, up to 8 MB. Unknown models prompt for a label photo or exact model. Temporary Gemini failures preserve intake with an explicit pending-analysis label.
 
-   ```dotenv
-   DATABASE_URL=postgres://tsdbadmin:<password>@<host>:<port>/tsdb?sslmode=require
-   ```
+Configure `SPECTRUM_PROJECT_ID`, `SPECTRUM_PROJECT_SECRET`, `PHOTON_ENABLED=true`, and `GEMINI_API_KEY` on the server. The default Gemini model is `gemini-3.8-flash`; set `GEMINI_MODEL` to another model available to your account if needed. Photon shared lines may require registering your test recipient in the Photon project dashboard. Replies go to inbound conversations; no cold messages are sent.
 
-3. Restart `npm run dev`. The backend logs `Storage: Tiger Data (Postgres)` and creates its tables on first request.
+## Tiger Data
 
-Tables: `repairs`, `chat_sessions`, `processed_messages`, `devices`, `parts`, plus `messages` and `events`, which are TimescaleDB hypertables that keep history beyond what the dashboard shows. Reset clears chat, events, and confirmations but keeps the device inventory. Any plain Postgres database also works; the hypertables are simply skipped.
+Set `DATABASE_URL` to your Tiger Cloud Postgres connection string, including its SSL settings, and restart the server. The dashboard reports the actual storage backend. If the service uses a private CA, set `DATABASE_SSL_CA_FILE` to its CA certificate file; the connection verifies both the certificate and hostname. Keep the CA file available on the machine running the backend.
 
-## Try the demo
+The new schema preserves the earlier prototype tables and creates:
 
-1. In the messages panel, choose Maya, the donor.
-2. Click **Offer help**, then **Yes, confirm**. The donor edge turns green.
-3. Switch to Jamie, the repairer, and confirm their help.
-4. The plan becomes ready. Withdraw either contribution to reopen it.
-5. Use **Add a device** for text intake. New submissions are shown separately for review; they do not enter the fixed demo match.
+- `hepha_devices`: actual inventory, parts, photo references and intake source.
+- `hepha_messages` and `hepha_events`: append-only activity, automatically converted to Timescale hypertables when the extension is installed.
+- `hepha_workspace`: transaction-locked conversation state, one-time link codes and message deduplication.
 
-The three inventory devices, people, conditions, and compatibility are fictional demo data. No physical repair, scheduling, identity verification, or diagnostic testing is implemented. A confirmed plan does not mean a working laptop.
+The dashboard queries inventory counts and hourly message activity from SQL. Timescale uses `time_bucket` for the last 24 hours; ordinary Postgres uses `date_trunc`. Photos remain local files; only their references are stored in the database. Without `DATABASE_URL`, the app uses `data/real-state.json`. The original fictional demo state is preserved but no longer displayed.
 
-## Connect Photon iMessage
+## Scope
 
-Put your Spectrum Cloud credentials into `.env`:
+Matching requires the same reported model and overlapping part names. Every connection still needs a human check of exact part number, connector, condition and suitability. The current app handles intake, conversation continuity and candidate discovery; volunteer scheduling, part reservation, compatibility approval and completed repairs are not implemented. This localhost prototype shares activity with anyone using that local dashboard; add authentication before hosting it publicly.
 
-```dotenv
-SPECTRUM_PROJECT_ID=your-project-id
-SPECTRUM_PROJECT_SECRET=your-project-secret
-PHOTON_ENABLED=true
-```
-
-Restart `npm run dev`. Check the messages panel for the connection status. Text your assigned Photon line **DONOR**, then **YES**; from a second conversation, text **REPAIRER**, then **YES**. **CANCEL** withdraws a contribution. **STATUS** returns the current plan. Messages are tagged “via iMessage” in the dashboard, which polls for updates.
-
-Spectrum shared lines may require adding your test recipients as project users in the Photon dashboard. Follow the [Photon setup guide](https://github.com/photon-hq/spectrum-ts) and [routing notes](https://github.com/photon-hq/skills/blob/main/skills/imessage/references/spectrum.md). The listener replies to incoming messages; it does not cold-message donors or create groups. The in-page chat remains a simulation even while Photon is connected.
-
-This prototype assigns donor/repairer roles per conversation to one demo repair. It does not authenticate participants or enforce contribution ownership. Keep the server on localhost for this demo; authentication and participant authorization are required before opening it to others.
-
-## Connect Gemini
-
-Create a key in [Google AI Studio](https://aistudio.google.com/apikey), add `GEMINI_API_KEY` to `.env`, and restart. Optionally set `GEMINI_MODEL` to a text model available to your account; the default is `gemini-3.8-flash`.
-
-**Add a device** uses Gemini to extract the model and reported symptom. Without a key, intake saves the description manually. Gemini does not establish compatibility or diagnose hardware. API credentials stay on the backend.
-
-## Verify and build
+## Checks
 
 ```sh
 npm test
@@ -69,6 +49,4 @@ npm run build
 npm start
 ```
 
-After building, `npm start` serves the compiled interface and API at http://127.0.0.1:3001. To use a custom backend port during development, also update the Vite proxy in `vite.config.ts`.
-
-Stack: React, Vite, TypeScript, Express, Spectrum, and the Google GenAI SDK. Local JSON persistence is intended for a single process.
+After building, `npm start` serves the UI and API on http://127.0.0.1:3001.
