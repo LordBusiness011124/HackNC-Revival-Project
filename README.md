@@ -1,47 +1,83 @@
 # Revival
 
-A community repair network. Start with a real device on the website, link it to an iMessage conversation, and send photos from your phone. Gemini extracts the visible model and condition. The map shows real submissions and potential donor-part connections.
+Revival helps people connect broken electronics with donor devices that may have the parts they need. Start a repair request on the website, continue it through iMessage, and send photos from your phone. The same device record follows the conversation.
 
-## Run
+## The problem
 
-Requires Node.js 22+.
+A laptop with a broken screen can still have a working motherboard, keyboard and other useful components. Another damaged laptop might have the screen it needs. Those parts can sit unused because the people who have them never find the people who need them.
+
+We can contact each other instantly, but finding a repair opportunity still takes scattered messages, technical descriptions and manual searches. Revival makes those contributions easier to collect and find.
+
+## The solution
+
+Revival turns device descriptions and photos into a shared repair inventory. People can submit a device that needs repair or offer a donor device. The website shows those real submissions and suggests possible connections when a needed part overlaps with a donor offer for the same reported model.
+
+For example, someone with a ThinkPad T480 and a cracked screen can submit a repair request. If someone else offers a T480 screen, Revival can surface that connection. A person still checks the exact part number, connector and working condition before using it. The example describes the flow, not a completed repair.
+
+## How Revival specifically solves it
+
+1. **Collect the device.** Add its description and an optional photo on the website, or start directly in iMessage.
+2. **Keep the conversation connected.** Text the website's random, one-use `LINK` command to the assigned Photon line. Later messages and photos update that same device instead of creating scattered records.
+3. **Organize the details.** Gemini extracts the visible or reported model, symptoms, and parts someone needs or can offer. An unclear model prompts for the exact model or a clearer label photo.
+4. **Find a possible connection.** SQL compares actual repair requests and donor offers by reported model and overlapping part names. The repair map displays candidates for human review.
+5. **Preserve the history.** Tiger Data stores inventory and conversation state. Timescale message and event history records how intake changes, and hourly queries show activity.
+
+The current app handles intake, conversation continuity and candidate discovery. Verified compatibility, part reservations, repair volunteers, scheduling and completed-repair tracking are next steps. Revival has not measured waste reduction yet.
+
+## Try it locally
+
+Requires Node.js 22 or newer.
 
 ```sh
 npm install
-cp .env.example .env
+```
+
+For a fresh checkout, copy `.env.example` to `.env` and configure the server-side credentials. Keep an existing `.env` if you already have one.
+
+```sh
 npm run dev
 ```
 
-Open http://127.0.0.1:5173. Existing local credentials stay in `.env`; do not overwrite them. The backend binds to localhost and keeps photos and fallback state in ignored `data/` files.
+Open http://127.0.0.1:5173. The backend runs on localhost port 3001.
 
-## Test with your phone
+### Continue on your phone
 
-1. Add your device with its model, symptoms and an optional photo.
-2. Copy its `LINK` command and text it to your assigned Photon line.
-3. Take a photo of the device or model label and send it in that same iMessage thread.
-4. The device updates on the website. Text `STATUS` for details or `NEW` to submit another device.
+1. Add your real device on the website.
+2. Copy its `LINK` command and text it to your assigned Photon iMessage line.
+3. Take a photo of the device or model label and send it in the same thread.
+4. Watch the device update on the website. Text `STATUS` for its details or `NEW` to start another intake.
 
-You can also start directly in iMessage: send a photo or a description. To offer a donor device, send `DONATE` followed by its model and the parts you can offer. Photo attachments support JPEG, PNG, WebP, HEIC and HEIF, up to 8 MB. Unknown models prompt for a label photo or exact model. Temporary Gemini failures preserve intake with an explicit pending-analysis label.
+To offer a donor device, start a new intake and send `DONATE` followed by its model and the parts you can offer. You can also begin directly with a photo or description. Photo intake supports JPEG, PNG, WebP, HEIC and HEIF, up to 8 MB. A temporary Gemini failure preserves the submission with a pending-analysis label.
 
-Configure `SPECTRUM_PROJECT_ID`, `SPECTRUM_PROJECT_SECRET`, `PHOTON_ENABLED=true`, and `GEMINI_API_KEY` on the server. The default Gemini model is `gemini-3.8-flash`; set `GEMINI_MODEL` to another model available to your account if needed. Photon shared lines may require registering your test recipient in the Photon project dashboard. Replies go to inbound conversations; no cold messages are sent.
+## Configuration
 
-## Tiger Data
+Credentials stay on the backend in the ignored `.env` file.
 
-Set `DATABASE_URL` to your Tiger Cloud Postgres connection string, including its SSL settings, and restart the server. The dashboard reports the actual storage backend. If the service uses a private CA, set `DATABASE_SSL_CA_FILE` to its CA certificate file; the connection verifies both the certificate and hostname. Keep the CA file available on the machine running the backend.
+| Variable | Purpose |
+| --- | --- |
+| `SPECTRUM_PROJECT_ID` | Photon project ID |
+| `SPECTRUM_PROJECT_SECRET` | Photon project secret |
+| `PHOTON_ENABLED` | Set to `true` to receive iMessage intake |
+| `GEMINI_API_KEY` | Gemini text and image extraction |
+| `GEMINI_MODEL` | Model available to your account; default `gemini-3.8-flash` |
+| `DATABASE_URL` | Tiger Data/Postgres connection string |
+| `DATABASE_SSL_CA_FILE` | Optional local CA certificate file for verified database TLS |
 
-The new schema preserves the earlier prototype tables and creates:
+Photon shared lines may require registering your test recipient in the project dashboard. The server replies to incoming conversations. It does not initiate outreach to donors or create groups.
 
-- `hepha_devices`: actual inventory, parts, photo references and intake source.
-- `hepha_messages` and `hepha_events`: append-only activity, automatically converted to Timescale hypertables when the extension is installed.
-- `hepha_workspace`: transaction-locked conversation state, one-time link codes and message deduplication.
+## Architecture and storage
 
-The dashboard queries inventory counts and hourly message activity from SQL. Timescale uses `time_bucket` for the last 24 hours; ordinary Postgres uses `date_trunc`. Photos remain local files; only their references are stored in the database. Without `DATABASE_URL`, the app uses `data/real-state.json`. The original fictional demo state is preserved but no longer displayed.
+React, TypeScript and Vite render the website. Express coordinates intake and conversations. Photon receives iMessage text and attachment bytes, and Gemini extracts structured device details. Tiger Data provides PostgreSQL persistence and Timescale activity history.
 
-## Scope
+The current schema uses `hepha_devices` for inventory, `hepha_workspace` for transaction-locked conversation state, and `hepha_messages` / `hepha_events` for append-only history. The table names retain their earlier prefix to preserve existing data after the Revival rename. Timescale uses `time_bucket` for hourly message activity. Plain Postgres uses `date_trunc`.
 
-Matching requires the same reported model and overlapping part names. Every connection still needs a human check of exact part number, connector, condition and suitability. The current app handles intake, conversation continuity and candidate discovery; volunteer scheduling, part reservation, compatibility approval and completed repairs are not implemented. This localhost prototype shares activity with anyone using that local dashboard; add authentication before hosting it publicly.
+Photo bytes stay in the ignored local `data/uploads` directory; the database stores their references. Without `DATABASE_URL`, state saves to `data/real-state.json`. Keep the local photo directory and any configured CA certificate when moving the runtime.
 
-## Checks
+## Current limits
+
+This version runs locally with a shared dashboard and no public authentication. A hosted version needs access controls and a photo deletion policy. Candidate matching does not certify hardware compatibility or working condition. The application does not reserve parts, coordinate volunteers, schedule repairs or record completed repairs yet.
+
+## Checks and production build
 
 ```sh
 npm test
@@ -49,4 +85,12 @@ npm run build
 npm start
 ```
 
-After building, `npm start` serves the UI and API on http://127.0.0.1:3001.
+After building, `npm start` serves the website and API on http://127.0.0.1:3001.
+
+## Presentation and submission
+
+The [Devpost packet](devpost-submission.md) contains the project story and submission copy. [Presenter notes](presentation/revival-presenter-notes.md) cover a two-minute demo and answers to likely questions. The [Canva presentation](https://canva.link/ck6m02cfxzoooev) uses four main slides, followed by technical and Q&A backup slides after the thank-you slide.
+
+## Hackathon tracks
+
+Revival connects Community repair with Gemini photo/text extraction, Photon iMessage intake and Tiger Data inventory/activity storage. Its blue sky, water, glass and greenery design follows the Frutiger Aero theme. These are implemented features and design choices; prize eligibility depends on the event rules.
