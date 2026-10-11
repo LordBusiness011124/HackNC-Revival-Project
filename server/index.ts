@@ -190,5 +190,5 @@ app.use(
   },
 );
 app.listen(Number(process.env.PORT || 3001), "127.0.0.1", () =>
-  console.log("Hepha backend ready on localhost"),
+  console.log("Revival backend ready on localhost"),
 );

@@ -49,7 +49,7 @@ export function createConversationHandler(
         event(s, `${device.id} connected to iMessage.`);
         log(s, session, cmd, "user");
         const reply = `Connected to ${device.id}: ${device.model}. Send a photo of the model label or describe the problem. Text STATUS anytime, or NEW to add another device.`;
-        log(s, session, reply, "hepha");
+        log(s, session, reply, "revival");
         return reply;
       });
     if (/^STATUS$/i.test(cmd))
@@ -60,7 +60,7 @@ export function createConversationHandler(
           ? `${d.id}: ${d.model}. ${d.description}\nParts: ${d.parts.join(", ") || "not yet identified"}. ${candidates(s).filter((m) => m.target === d.id || m.donor === d.id).length} candidate connection(s), awaiting compatibility review.`
           : "Send a device photo or describe its model and problem. Use DONATE before a description to offer parts, or LINK followed by your website code.";
         log(s, session, cmd, "user");
-        log(s, session, reply, "hepha");
+        log(s, session, reply, "revival");
         return reply;
       });
     if (/^NEW$/i.test(cmd))
@@ -106,7 +106,7 @@ export function createConversationHandler(
           photo: saved,
         });
       const reply = `${parsed.analysis === "pending" ? "Photo or notes saved, but Gemini is temporarily unavailable. Please send the exact model and symptoms.\n" : ""}Saved ${d.id}: ${d.model}. ${d.description}\n${d.model === "Unverified device" ? "Please send a clear photo of the model label or type the exact model. " : ""}Parts: ${d.parts.join(", ") || "Tell me which part you need or can offer"}. See your device on the website. Candidate connections require a human compatibility check. Text STATUS or NEW.`;
-      log(s, session, reply, "hepha");
+      log(s, session, reply, "revival");
       return reply;
     });
   };

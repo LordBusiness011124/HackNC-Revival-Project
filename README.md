@@ -1,6 +1,6 @@
-# Hepha
+# Revival
 
-A community repair network named for Hephaestus. Start with a real device on the website, link it to an iMessage conversation, and send photos from your phone. Gemini extracts the visible model and condition. The map shows real submissions and potential donor-part connections.
+A community repair network. Start with a real device on the website, link it to an iMessage conversation, and send photos from your phone. Gemini extracts the visible model and condition. The map shows real submissions and potential donor-part connections.
 
 ## Run
 

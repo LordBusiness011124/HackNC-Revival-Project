@@ -144,7 +144,7 @@ export default function App() {
       <div className="workspace">
         <header className="topbar">
           <a href="#" className="wordmark">
-            hepha<span>↗</span>
+            revival<span>↗</span>
           </a>
           <span className="tagline">GOOD THINGS DESERVE A SECOND LIFE.</span>
           <span className="campus">
@@ -449,7 +449,7 @@ export default function App() {
             <span>
               <Leaf size={13} /> Less waste. More possibility.
             </span>
-            <span>Hepha · Community repair in motion</span>
+            <span>Revival · Community repair in motion</span>
           </footer>
         </main>
       </div>
